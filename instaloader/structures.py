@@ -112,8 +112,8 @@ class Post:
             node.update(self._full_metadata_dict)
         if self._owner_profile:
             node['owner'] = self.owner_profile._asdict()
-        if self._location:
-            node['location'] = self._location._asdict()
+        if self.location:
+            node['location'] = self.location._asdict()
         if self._iphone_struct_:
             node['iphone_struct'] = self._iphone_struct_
         return node
