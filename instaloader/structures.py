@@ -526,8 +526,6 @@ class Post:
         loc = self._field("location")
         if self._location or not loc:
             return self._location
-        if not self._context.is_logged_in:
-            return None
         location_id = int(loc['id'])
         if any(k not in loc for k in ('name', 'slug', 'has_public_page', 'lat', 'lng')):
             loc = self._context.get_json("explore/locations/{0}/".format(location_id),
