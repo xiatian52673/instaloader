@@ -25,6 +25,7 @@ def copy_session(session: requests.Session, request_timeout: Optional[float] = N
     new = requests.Session()
     new.cookies = requests.utils.cookiejar_from_dict(requests.utils.dict_from_cookiejar(session.cookies))
     new.headers = session.headers.copy()
+    new.proxies.update(session.proxies)
     # Override default timeout behavior.
     # Need to silence mypy bug for this. See: https://github.com/python/mypy/issues/2427
     new.request = partial(new.request, timeout=request_timeout) # type: ignore
@@ -33,7 +34,7 @@ def copy_session(session: requests.Session, request_timeout: Optional[float] = N
 
 def default_user_agent() -> str:
     return 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ' \
-           '(KHTML, like Gecko) Chrome/51.0.2704.79 Safari/537.36'
+           '(KHTML, like Gecko) Chrome/88.0.4324.96 Safari/537.36'
 
 
 class InstaloaderContext:
@@ -53,10 +54,12 @@ class InstaloaderContext:
 
     def __init__(self, sleep: bool = True, quiet: bool = False, user_agent: Optional[str] = None,
                  max_connection_attempts: int = 3, request_timeout: float = 300.0,
-                 rate_controller: Optional[Callable[["InstaloaderContext"], "RateController"]] = None):
+                 rate_controller: Optional[Callable[["InstaloaderContext"], "RateController"]] = None,
+                 proxies: Optional[str] = None):
 
         self.user_agent = user_agent if user_agent is not None else default_user_agent()
         self.request_timeout = request_timeout
+        self.proxies = proxies
         self._session = self.get_anonymous_session()
         self.username = None
         self.sleep = sleep
@@ -160,6 +163,7 @@ class InstaloaderContext:
                                 'ig_vw': '1920', 'csrftoken': '',
                                 's_network': '', 'ds_user_id': ''})
         session.headers.update(self._default_http_header(empty_session_only=True))
+        session.proxies = self.proxies  # type: ignore
         # Override default timeout behavior.
         # Need to silence mypy bug for this. See: https://github.com/python/mypy/issues/2427
         session.request = partial(session.request, timeout=self.request_timeout) # type: ignore
@@ -175,6 +179,7 @@ class InstaloaderContext:
         session.cookies = requests.utils.cookiejar_from_dict(pickle.load(sessionfile))
         session.headers.update(self._default_http_header())
         session.headers.update({'X-CSRFToken': session.cookies.get_dict()['csrftoken']})
+        session.proxies.update(self.proxies)
         # Override default timeout behavior.
         # Need to silence mypy bug for this. See: https://github.com/python/mypy/issues/2427
         session.request = partial(session.request, timeout=self.request_timeout) # type: ignore
@@ -188,7 +193,6 @@ class InstaloaderContext:
 
     def login(self, user, passwd):
         """Not meant to be used directly, use :meth:`Instaloader.login`.
-
         :raises InvalidArgumentException: If the provided username does not exist.
         :raises BadCredentialsException: If the provided password is wrong.
         :raises ConnectionException: If connection to Instagram failed.
@@ -202,6 +206,7 @@ class InstaloaderContext:
         session.cookies.update({'sessionid': '', 'mid': '', 'ig_pr': '1',
                                 'ig_vw': '1920', 'ig_cb': '1', 'csrftoken': '',
                                 's_network': '', 'ds_user_id': ''})
+        session.proxies.update(self.proxies)
         session.headers.update(self._default_http_header())
         # Override default timeout behavior.
         # Need to silence mypy bug for this. See: https://github.com/python/mypy/issues/2427
@@ -262,10 +267,8 @@ class InstaloaderContext:
     def two_factor_login(self, two_factor_code):
         """Second step of login if 2FA is enabled.
         Not meant to be used directly, use :meth:`Instaloader.two_factor_login`.
-
         :raises InvalidArgumentException: No two-factor authentication pending.
         :raises BadCredentialsException: 2FA verification code invalid.
-
         .. versionadded:: 4.2"""
         if not self.two_factor_auth_pending:
             raise InvalidArgumentException("No two-factor authentication pending.")
@@ -288,12 +291,11 @@ class InstaloaderContext:
     def do_sleep(self):
         """Sleep a short time if self.sleep is set. Called before each request to instagram.com."""
         if self.sleep:
-            time.sleep(min(random.expovariate(0.7), 5.0))
+            time.sleep(min(random.expovariate(0.6), 15.0))
 
     def get_json(self, path: str, params: Dict[str, Any], host: str = 'www.instagram.com',
                  session: Optional[requests.Session] = None, _attempt=1) -> Dict[str, Any]:
         """JSON request to Instagram.
-
         :param path: URL, relative to the given domain which defaults to www.instagram.com/
         :param params: GET parameters
         :param host: Domain part of the URL from where to download the requested JSON; defaults to www.instagram.com
@@ -388,7 +390,6 @@ class InstaloaderContext:
                       referer: Optional[str] = None, rhx_gis: Optional[str] = None) -> Dict[str, Any]:
         """
         Do a GraphQL Query.
-
         :param query_hash: Query identifying hash.
         :param variables: Variables for the Query.
         :param referer: HTTP Referer, or None.
@@ -428,7 +429,6 @@ class InstaloaderContext:
                           first_data: Optional[Dict[str, Any]] = None) -> Iterator[Dict[str, Any]]:
         """
         Retrieve a list of GraphQL nodes.
-
         .. deprecated:: 4.5
            Use :class:`NodeIterator` instead, which provides more functionality.
         """
@@ -459,14 +459,12 @@ class InstaloaderContext:
 
     def get_iphone_json(self, path: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """JSON request to ``i.instagram.com``.
-
         :param path: URL, relative to ``i.instagram.com/``
         :param params: GET parameters
         :return: Decoded response dictionary
         :raises QueryReturnedBadRequestException: When the server responds with a 400.
         :raises QueryReturnedNotFoundException: When the server responds with a 404.
         :raises ConnectionException: When query repeatedly failed.
-
         .. versionadded:: 4.2.1"""
         with copy_session(self._session, self.request_timeout) as tempsession:
             tempsession.headers['User-Agent'] = 'Instagram 146.0.0.27.125 (iPhone12,1; iOS 13_3; en_US; en-US; ' \
@@ -477,7 +475,6 @@ class InstaloaderContext:
 
     def write_raw(self, resp: Union[bytes, requests.Response], filename: str) -> None:
         """Write raw response data into a file.
-
         .. versionadded:: 4.2.1"""
         self.log(filename, end=' ', flush=True)
         with open(filename + '.temp', 'wb') as file:
@@ -489,11 +486,9 @@ class InstaloaderContext:
 
     def get_raw(self, url: str, _attempt=1) -> requests.Response:
         """Downloads a file anonymously.
-
         :raises QueryReturnedNotFoundException: When the server responds with a 404.
         :raises QueryReturnedForbiddenException: When the server responds with a 403.
         :raises ConnectionException: When download failed.
-
         .. versionadded:: 4.2.1"""
         with self.get_anonymous_session() as anonymous_session:
             resp = anonymous_session.get(url, stream=True)
@@ -511,7 +506,6 @@ class InstaloaderContext:
 
     def get_and_write_raw(self, url: str, filename: str) -> None:
         """Downloads and writes anonymously-requested raw data into a file.
-
         :raises QueryReturnedNotFoundException: When the server responds with a 404.
         :raises QueryReturnedForbiddenException: When the server responds with a 403.
         :raises ConnectionException: When download repeatedly failed."""
@@ -528,20 +522,20 @@ class InstaloaderContext:
             self._root_rhx_gis = self.get_json('', {}).get('rhx_gis', '')
         return self._root_rhx_gis or None
 
+    @property
+    def rate_controller(self):
+        return self._rate_controller
+
 
 class RateController:
     """
     Class providing request tracking and rate controlling to stay within rate limits.
-
     It can be overridden to change Instaloader's behavior regarding rate limits, for example to raise a custom
     exception when the rate limit is hit::
-
        import instaloader
-
        class MyRateController(instaloader.RateController):
            def sleep(self, secs):
                raise MyCustomException()
-
        L = instaloader.Instaloader(rate_controller=lambda ctx: MyRateController(ctx))
     """
 
@@ -549,6 +543,7 @@ class RateController:
         self._context = context
         self._query_timestamps = dict()  # type: Dict[str, List[float]]
         self._earliest_next_request_time = 0.0
+        self._iphone_earliest_next_request_time = 0.0
 
     def sleep(self, secs: float):
         """Wait given number of seconds."""
@@ -559,7 +554,7 @@ class RateController:
 
     def _dump_query_timestamps(self, current_time: float, failed_query_type: str):
         windows = [10, 11, 20, 22, 30, 60]
-        self._context.error("Requests within last {} minutes grouped by type:"
+        self._context.error("Number of requests within last {} minutes grouped by type:"
                             .format('/'.join(str(w) for w in windows)),
                             repeat_at_end=False)
         for query_type, times in self._query_timestamps.items():
@@ -571,11 +566,14 @@ class RateController:
             ), repeat_at_end=False)
 
     def count_per_sliding_window(self, query_type: str) -> int:
-        """Return how many requests can be done within the sliding window."""
+        """Return how many requests of the given type can be done within a sliding window of 11 minutes.
+        This is called by :meth:`RateController.query_waittime` and allows to simply customize wait times before queries
+        at query_type granularity. Consider overriding :meth:`RateController.query_waittime` directly if you need more
+        control."""
         # Not static, to allow for the count_per_sliding_window to depend on context-inherent properties, such as
         # whether we are logged in.
         # pylint:disable=no-self-use
-        return 75 if query_type in ['iphone', 'other'] else 200
+        return 75 if query_type == 'other' else 200
 
     def _reqs_in_sliding_window(self, query_type: Optional[str], current_time: float, window: float) -> List[float]:
         if query_type is not None:
@@ -591,6 +589,7 @@ class RateController:
     def query_waittime(self, query_type: str, current_time: float, untracked_queries: bool = False) -> float:
         """Calculate time needed to wait before query can be executed."""
         per_type_sliding_window = 660
+        iphone_sliding_window = 1800
         if query_type not in self._query_timestamps:
             self._query_timestamps[query_type] = []
         self._query_timestamps[query_type] = list(filter(lambda t: t > current_time - 60 * 60,
@@ -616,25 +615,42 @@ class RateController:
 
         def untracked_next_request_time():
             if untracked_queries:
-                reqs_in_sliding_window = self._reqs_in_sliding_window(query_type, current_time, per_type_sliding_window)
-                self._earliest_next_request_time = min(reqs_in_sliding_window) + per_type_sliding_window + 6
-            return self._earliest_next_request_time
+                if query_type == "iphone":
+                    reqs_in_sliding_window = self._reqs_in_sliding_window(query_type, current_time,
+                                                                          iphone_sliding_window)
+                    self._iphone_earliest_next_request_time = min(reqs_in_sliding_window) + iphone_sliding_window + 18
+                else:
+                    reqs_in_sliding_window = self._reqs_in_sliding_window(query_type, current_time,
+                                                                          per_type_sliding_window)
+                    self._earliest_next_request_time = min(reqs_in_sliding_window) + per_type_sliding_window + 6
+            return max(self._iphone_earliest_next_request_time, self._earliest_next_request_time)
+
+        def iphone_next_request():
+            if query_type == "iphone":
+                reqs_in_sliding_window = self._reqs_in_sliding_window(query_type, current_time, iphone_sliding_window)
+                if len(reqs_in_sliding_window) >= 199:
+                    return min(reqs_in_sliding_window) + iphone_sliding_window + 18
+            return 0.0
 
         return max(0.0,
                    max(
                        per_type_next_request_time(),
                        gql_accumulated_next_request_time(),
                        untracked_next_request_time(),
+                       iphone_next_request(),
                    ) - current_time)
 
     def wait_before_query(self, query_type: str) -> None:
-        """This method is called before a query to Instagram. It calls :meth:`RateController.sleep` to wait
-        until the request can be made."""
+        """This method is called before a query to Instagram.
+        It calls :meth:`RateController.query_waittime` to determine the time needed to wait and then calls
+        :meth:`RateController.sleep` to wait until the request can be made."""
         waittime = self.query_waittime(query_type, time.monotonic(), False)
         assert waittime >= 0
         if waittime > 15:
-            self._context.log("\nToo many queries in the last time. Need to wait {} seconds, until {:%H:%M}."
-                              .format(round(waittime), datetime.now() + timedelta(seconds=waittime)))
+            formatted_waittime = ("{} seconds".format(round(waittime)) if waittime <= 666 else
+                                  "{} minutes".format(round(waittime / 60)))
+            self._context.log("\nToo many queries in the last time. Need to wait {}, until {:%H:%M}."
+                              .format(formatted_waittime, datetime.now() + timedelta(seconds=waittime)))
         if waittime > 0:
             self.sleep(waittime)
         if query_type not in self._query_timestamps:
@@ -643,8 +659,9 @@ class RateController:
             self._query_timestamps[query_type].append(time.monotonic())
 
     def handle_429(self, query_type: str) -> None:
-        """This method is called to handle a 429 Too Many Requests response. It calls :meth:`RateController.sleep` to
-         wait until we can repeat the same request."""
+        """This method is called to handle a 429 Too Many Requests response.
+        It calls :meth:`RateController.query_waittime` to determine the time needed to wait and then calls
+        :meth:`RateController.sleep` to wait until we can repeat the same request."""
         current_time = time.monotonic()
         waittime = self.query_waittime(query_type, current_time, True)
         assert waittime >= 0
@@ -654,8 +671,10 @@ class RateController:
                         "App while Instaloader is running.")
         self._context.error(textwrap.fill(text_for_429), repeat_at_end=False)
         if waittime > 1.5:
-            self._context.error("The request will be retried in {} seconds, at {:%H:%M}."
-                                .format(round(waittime), datetime.now() + timedelta(seconds=waittime)),
+            formatted_waittime = ("{} seconds".format(round(waittime)) if waittime <= 666 else
+                                  "{} minutes".format(round(waittime / 60)))
+            self._context.error("The request will be retried in {}, at {:%H:%M}."
+                                .format(formatted_waittime, datetime.now() + timedelta(seconds=waittime)),
                                 repeat_at_end=False)
         if waittime > 0:
             self.sleep(waittime)

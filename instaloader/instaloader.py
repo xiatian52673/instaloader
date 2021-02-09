@@ -67,9 +67,7 @@ def _requires_login(func: Callable) -> Callable:
 
 def _retry_on_connection_error(func: Callable) -> Callable:
     """Decorator to retry the function max_connection_attemps number of times.
-
     Herewith-decorated functions need an ``_attempt`` keyword argument.
-
     This is to decorate functions that do network requests that may fail. Note that
     :meth:`.get_json`, :meth:`.get_iphone_json`, :meth:`.graphql_query` and :meth:`.graphql_node_list` already have
     their own logic for retrying, hence functions that only use these for network access must not be decorated with this
@@ -139,7 +137,6 @@ class _PostPathFormatter(_ArbitraryItemFormatter):
 
 class Instaloader:
     """Instaloader Class.
-
     :param quiet: :option:`--quiet`
     :param user_agent: :option:`--user-agent`
     :param dirname_pattern: :option:`--dirname-pattern`, default is ``{target}``
@@ -161,9 +158,9 @@ class Instaloader:
     :param resume_prefix: :option:`--resume-prefix`, or None for :option:`--no-resume`.
     :param check_resume_bbd: Whether to check the date of expiry of resume files and reject them if expired.
     :param slide: :option:`--slide`
-
+    :param proxies: proxy info {'https': 'http://{username}:{password}@{host}:{port}',
+                                'http':'http://{username}:{password}@{host}:{port}'},
     .. attribute:: context
-
        The associated :class:`InstaloaderContext` with low-level communication functions and logging.
     """
 
@@ -187,10 +184,12 @@ class Instaloader:
                  rate_controller: Optional[Callable[[InstaloaderContext], RateController]] = None,
                  resume_prefix: Optional[str] = "iterator",
                  check_resume_bbd: bool = True,
-                 slide: Optional[str] = None):
+                 slide: Optional[str] = None,
+                 proxies: Optional[dict] = None):
 
+        self.proxies = proxies
         self.context = InstaloaderContext(sleep, quiet, user_agent, max_connection_attempts,
-                                          request_timeout, rate_controller)
+                                          request_timeout, rate_controller, proxies)
 
         # configuration parameters
         self.dirname_pattern = dirname_pattern or "{target}"
@@ -256,7 +255,8 @@ class Instaloader:
             request_timeout=self.context.request_timeout,
             resume_prefix=self.resume_prefix,
             check_resume_bbd=self.check_resume_bbd,
-            slide=self.slide)
+            slide=self.slide,
+            proxy=self.proxies['https'])
         yield new_loader
         self.context.error_log.extend(new_loader.context.error_log)
         new_loader.context.error_log = []  # avoid double-printing of errors
@@ -405,7 +405,6 @@ class Instaloader:
                                            name_suffix: str,
                                            extension: str):
         """Returns a filename within the target path.
-
         .. versionadded:: 4.5"""
         if ((format_string_contains_key(self.dirname_pattern, 'profile') or
              format_string_contains_key(self.dirname_pattern, 'target'))):
@@ -421,7 +420,6 @@ class Instaloader:
                            _attempt: int = 1) -> None:
         """Downloads and saves a picture that does not have an association with a Post or StoryItem, such as a
         Profile picture or a Highlight cover picture. Modification time is taken from the HTTP response headers.
-
         .. versionadded:: 4.3"""
 
         def _epoch_to_string(epoch: datetime) -> str:
@@ -455,20 +453,32 @@ class Instaloader:
 
     def download_highlight_cover(self, highlight: Highlight, target: Union[str, Path]) -> None:
         """Downloads and saves Highlight cover picture.
-
         .. versionadded:: 4.3"""
         self.download_title_pic(highlight.cover_url, target, 'cover', highlight.owner_profile)
 
     def download_hashtag_profilepic(self, hashtag: Hashtag) -> None:
         """Downloads and saves the profile picture of a Hashtag.
-
         .. versionadded:: 4.4"""
         self.download_title_pic(hashtag.profile_pic_url, '#' + hashtag.name, 'profile_pic', None)
+
+    def set_proxy(self, proxy: str) -> None:
+        """Set a HTTP(S)/Socks5 proxy in case of Instagram has limited/blocked your IP address.
+        :param proxy: A proxy with protocol:
+         e.g. 'socks5://proxy.host:port' or 'https://proxy.host:port'
+         you can use following protocols: http, https, socks5.
+        """
+        self.proxies = {'https': proxy}
+        self.context = InstaloaderContext(self.context.sleep, self.context.quiet, self.context.user_agent,
+                                          self.context.max_connection_attempts, self.context.request_timeout,
+                                          self.context.rate_controller.__class__, proxy)
+
+    def get_proxy(self) -> Optional[str]:
+        """Get current using HTTP(S)/Socks5 proxy."""
+        return self.proxies['https']
 
     @_requires_login
     def save_session_to_file(self, filename: Optional[str] = None) -> None:
         """Saves internally stored :class:`requests.Session` object.
-
         :param filename: Filename, or None to use default filename.
         :raises LoginRequiredException: If called without being logged in.
         """
@@ -486,9 +496,7 @@ class Instaloader:
 
     def load_session_from_file(self, username: str, filename: Optional[str] = None) -> None:
         """Internally stores :class:`requests.Session` object loaded from file.
-
         If filename is None, the file with the default session path is loaded.
-
         :raises FileNotFoundError: If the file does not exist.
         """
         if filename is None:
@@ -505,7 +513,6 @@ class Instaloader:
 
     def login(self, user: str, passwd: str) -> None:
         """Log in to instagram with given username and password and internally store session object.
-
         :raises InvalidArgumentException: If the provided username does not exist.
         :raises BadCredentialsException: If the provided password is wrong.
         :raises ConnectionException: If connection to Instagram failed.
@@ -516,17 +523,14 @@ class Instaloader:
     def two_factor_login(self, two_factor_code) -> None:
         """Second step of login if 2FA is enabled.
         Not meant to be used directly, use :meth:`Instaloader.two_factor_login`.
-
         :raises InvalidArgumentException: No two-factor authentication pending.
         :raises BadCredentialsException: 2FA verification code invalid.
-
         .. versionadded:: 4.2"""
         self.context.two_factor_login(two_factor_code)
 
     @staticmethod
     def __prepare_filename(filename_template: str, url: Callable[[], str]) -> str:
         """Replace filename token inside filename_template with url's filename and assure the directories exist.
-
         .. versionadded:: 4.6"""
         if "{filename}" in filename_template:
             filename = filename_template.replace("{filename}",
@@ -538,14 +542,12 @@ class Instaloader:
 
     def format_filename(self, item: Union[Post, StoryItem, PostSidecarNode], target: Optional[Union[str, Path]] = None):
         """Format filename of a :class:`Post` or :class:`StoryItem` according to ``filename-pattern`` parameter.
-
         .. versionadded:: 4.1"""
         return _PostPathFormatter(item).format(self.filename_pattern, target=target)
 
     def download_post(self, post: Post, target: Union[str, Path]) -> bool:
         """
         Download everything associated with one instagram post node, i.e. picture, caption and video.
-
         :param post: Post to download.
         :param target: Target name, i.e. profile name, #hashtag, :feed; for filename.
         :return: True if something was downloaded, False otherwise, i.e. file was already there
@@ -622,7 +624,6 @@ class Instaloader:
         """Get available stories from followees or all stories of users whose ID are given.
         Does not mark stories as seen.
         To use this, one needs to be logged in
-
         :param userids: List of user IDs to be processed in terms of downloading their stories, or None.
         :raises LoginRequiredException: If called without being logged in.
         """
@@ -655,7 +656,6 @@ class Instaloader:
         Download available stories from user followees or all stories of users whose ID are given.
         Does not mark stories as seen.
         To use this, one needs to be logged in
-
         :param userids: List of user IDs or Profiles to be processed in terms of downloading their stories
         :param fast_update: If true, abort when first already-downloaded picture is encountered
         :param filename_target: Replacement for {target} in dirname_pattern and filename_pattern
@@ -687,7 +687,6 @@ class Instaloader:
 
     def download_storyitem(self, item: StoryItem, target: Union[str, Path]) -> bool:
         """Download one user story.
-
         :param item: Story item, as in story['items'] for story in :meth:`get_stories`
         :param target: Replacement for {target} in dirname_pattern and filename_pattern
         :return: True if something was downloaded, False otherwise, i.e. file was already there
@@ -718,9 +717,7 @@ class Instaloader:
     def get_highlights(self, user: Union[int, Profile]) -> Iterator[Highlight]:
         """Get all highlights from a user.
         To use this, one needs to be logged in.
-
         .. versionadded:: 4.1
-
         :param user: ID or Profile of the user whose highlights should get fetched.
         :raises LoginRequiredException: If called without being logged in.
         """
@@ -744,12 +741,9 @@ class Instaloader:
         """
         Download available highlights from a user whose ID is given.
         To use this, one needs to be logged in.
-
         .. versionadded:: 4.1
-
         .. versionchanged:: 4.3
            Also downloads and saves the Highlight's cover pictures.
-
         :param user: ID or Profile of the user whose highlights should get downloaded.
         :param fast_update: If true, abort when first already-downloaded picture is encountered
         :param filename_target: Replacement for {target} in dirname_pattern and filename_pattern
@@ -789,12 +783,9 @@ class Instaloader:
                             owner_profile: Optional[Profile] = None) -> None:
         """
         Download the Posts returned by given Post Iterator.
-
         .. versionadded:: 4.4
-
         .. versionchanged:: 4.5
            Transparently resume an aborted operation if `posts` is a :class:`NodeIterator`.
-
         :param posts: Post Iterator to loop through.
         :param target: Target name.
         :param fast_update: :option:`--fast-update`.
@@ -860,7 +851,6 @@ class Instaloader:
     @_requires_login
     def get_feed_posts(self) -> Iterator[Post]:
         """Get Posts of the user's feed.
-
         :return: Iterator over Posts of the user's feed.
         :raises LoginRequiredException: If called without being logged in.
         """
@@ -887,14 +877,11 @@ class Instaloader:
                             post_filter: Optional[Callable[[Post], bool]] = None) -> None:
         """
         Download pictures from the user's feed.
-
         Example to download up to the 20 pics the user last liked::
-
             loader = Instaloader()
             loader.load_session_from_file('USER')
             loader.download_feed_posts(max_count=20, fast_update=True,
                                        post_filter=lambda post: post.viewer_has_liked)
-
         :param max_count: Maximum count of pictures to download
         :param fast_update: If true, abort when first already-downloaded picture is encountered
         :param post_filter: function(post), which returns True if given picture should be downloaded
@@ -907,7 +894,6 @@ class Instaloader:
     def download_saved_posts(self, max_count: int = None, fast_update: bool = False,
                              post_filter: Optional[Callable[[Post], bool]] = None) -> None:
         """Download user's saved pictures.
-
         :param max_count: Maximum count of pictures to download
         :param fast_update: If true, abort when first already-downloaded picture is encountered
         :param post_filter: function(post), which returns True if given picture should be downloaded
@@ -923,12 +909,9 @@ class Instaloader:
     @_requires_login
     def get_location_posts(self, location: str) -> Iterator[Post]:
         """Get Posts which are listed by Instagram for a given Location.
-
         :return:  Iterator over Posts of a location's posts
         :raises LoginRequiredException: If called without being logged in.
-
         .. versionadded:: 4.2
-
         .. versionchanged:: 4.2.9
            Require being logged in (as required by Instagram)
         """
@@ -951,20 +934,15 @@ class Instaloader:
                           post_filter: Optional[Callable[[Post], bool]] = None,
                           fast_update: bool = False) -> None:
         """Download pictures of one location.
-
         To download the last 30 pictures with location 362629379, do::
-
             loader = Instaloader()
             loader.download_location(362629379, max_count=30)
-
         :param location: Location to download, as Instagram numerical ID
         :param max_count: Maximum count of pictures to download
         :param post_filter: function(post), which returns True if given picture should be downloaded
         :param fast_update: If true, abort when first already-downloaded picture is encountered
         :raises LoginRequiredException: If called without being logged in.
-
         .. versionadded:: 4.2
-
         .. versionchanged:: 4.2.9
            Require being logged in (as required by Instagram)
         """
@@ -975,7 +953,6 @@ class Instaloader:
     @_requires_login
     def get_explore_posts(self) -> NodeIterator[Post]:
         """Get Posts which are worthy of exploring suggested by Instagram.
-
         :return: Iterator over Posts of the user's suggested posts.
         :rtype: NodeIterator[Post]
         :raises LoginRequiredException: If called without being logged in.
@@ -990,7 +967,6 @@ class Instaloader:
 
     def get_hashtag_posts(self, hashtag: str) -> Iterator[Post]:
         """Get Posts associated with a #hashtag.
-
         .. deprecated:: 4.4
            Use :meth:`Hashtag.get_posts`."""
         return Hashtag.from_name(self.context, hashtag).get_posts()
@@ -1002,19 +978,15 @@ class Instaloader:
                          profile_pic: bool = True,
                          posts: bool = True) -> None:
         """Download pictures of one hashtag.
-
         To download the last 30 pictures with hashtag #cat, do::
-
             loader = Instaloader()
             loader.download_hashtag('cat', max_count=30)
-
         :param hashtag: Hashtag to download, as instance of :class:`Hashtag`, or string without leading '#'
         :param max_count: Maximum count of pictures to download
         :param post_filter: function(post), which returns True if given picture should be downloaded
         :param fast_update: If true, abort when first already-downloaded picture is encountered
         :param profile_pic: not :option:`--no-profile-pic`.
         :param posts: not :option:`--no-posts`.
-
         .. versionchanged:: 4.4
            Add parameters `profile_pic` and `posts`.
         """
@@ -1041,7 +1013,6 @@ class Instaloader:
                         target: Optional[str] = None,
                         post_filter: Optional[Callable[[Post], bool]] = None) -> None:
         """Download all posts where a profile is tagged.
-
         .. versionadded:: 4.1"""
         self.context.log("Retrieving tagged posts for profile {}.".format(profile.username))
         self.posts_download_loop(profile.get_tagged_posts(),
@@ -1053,7 +1024,6 @@ class Instaloader:
     def download_igtv(self, profile: Profile, fast_update: bool = False,
                       post_filter: Optional[Callable[[Post], bool]] = None) -> None:
         """Download IGTV videos of a profile.
-
         .. versionadded:: 4.3"""
         self.context.log("Retrieving IGTV videos for profile {}.".format(profile.username))
         self.posts_download_loop(profile.get_igtv_posts(), profile.username, fast_update, post_filter,
@@ -1072,7 +1042,6 @@ class Instaloader:
     def save_profile_id(self, profile: Profile):
         """
         Store ID of profile locally.
-
         .. versionadded:: 4.0.6
         """
         os.makedirs(self.dirname_pattern.format(profile=profile.username,
@@ -1085,7 +1054,6 @@ class Instaloader:
         """
         Consult locally stored ID of profile with given name, check whether ID matches and whether name
         has changed and return current name of the profile, and store ID of profile.
-
         :param profile_name: Profile name
         :return: Instance of current profile
         """
@@ -1142,7 +1110,6 @@ class Instaloader:
                           storyitem_filter: Optional[Callable[[Post], bool]] = None,
                           raise_errors: bool = False):
         """High-level method to download set of profiles.
-
         :param profiles: Set of profiles to download.
         :param profile_pic: not :option:`--no-profile-pic`.
         :param posts: not :option:`--no-posts`.
@@ -1156,9 +1123,7 @@ class Instaloader:
         :param raise_errors:
            Whether :exc:`LoginRequiredException` and :exc:`PrivateProfileNotFollowedException` should be raised or
            catched and printed with :meth:`InstaloaderContext.error_catcher`.
-
         .. versionadded:: 4.1
-
         .. versionchanged:: 4.3
            Add `igtv` parameter.
         """
@@ -1231,7 +1196,6 @@ class Instaloader:
                          post_filter: Optional[Callable[[Post], bool]] = None,
                          storyitem_filter: Optional[Callable[[StoryItem], bool]] = None) -> None:
         """Download one profile
-
         .. deprecated:: 4.1
            Use :meth:`Instaloader.download_profiles`.
         """
@@ -1299,7 +1263,6 @@ class Instaloader:
 
     def interactive_login(self, username: str) -> None:
         """Logs in and internally stores session, asking user for password interactively.
-
         :raises LoginRequiredException: when in quiet mode.
         :raises InvalidArgumentException: If the provided username does not exist.
         :raises ConnectionException: If connection to Instagram failed."""
